@@ -1,5 +1,5 @@
-# Install Development Environment
-This repository contains the files needed to install the DigitalSats GMAT development environment.
+# gmat2020a_box
+This repository contains the files needed to install the DigitalSats GMAT development environment in a Vagrant Virtual Machine (box).
 ## Purpose
 The DigitalSats project provides opensource repositories for enhancements to the
 NASA Generalized Mission Analysis Tool - GMAT (https://gmat.atlassian.net/wiki/spaces/GW/overview?mode=global).
