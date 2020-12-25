@@ -1,15 +1,16 @@
 #!/bin/bash
 
 ######################################################################################################################
-#                              trustGMATDesktop.sh                                                                   #
+#                              trustGMATdDesktop.sh                                                                  #
 #                                                                                                                    #
-# Ubuntu shell script to set the trust attribute on the GMAT desktop icon.                                           #
+# Ubuntu shell script to set the trust attribute on the GMATd desktop icon.                                          #
 # It is based on a script posted by Janos on StackExchange -- AskUbuntu                                              #
 # https://askubuntu.com/questions/1070057/trust-desktop-icons-without-clicking-them-manually-in-ubuntu-18-04-gnome-3 #
 #                                                                                                                    #
 # Change History                                                                                                     #
 # 07/20/2020  Harry Goldschmitt  Original code.                                                                      #
 # 09/18/2020  Harry Goldschmitt  Added sourced GMATUtilities.sh and logging                                          #
+# 12/16/2020  Harry Goldschmitt  Added better error handling logic                                                   #
 #                                                                                                                    #
 ######################################################################################################################
 ################################################################################
@@ -34,9 +35,10 @@
 #                                                                              #
 ################################################################################
 
-SCRIPT_DIRECTORY="/vagrant"
-[ -d $SCRIPT_DIRECTORY ] || \
-    SCRIPT_DIRECTORY="$HOME"
+export FULLPATH
+FULLPATH=$(readlink -f "$0")
+export SCRIPT_DIRECTORY
+SCRIPT_DIRECTORY="${FULLPATH%/*}"
 
 [ -r "$SCRIPT_DIRECTORY/GMATUtilities.sh" ] || {
     echo "GMATUtilities.sh not found or readable" >&2;
@@ -45,19 +47,44 @@ SCRIPT_DIRECTORY="/vagrant"
 # shellcheck source=./GMATUtilities.sh
 source "$SCRIPT_DIRECTORY/GMATUtilities.sh"
 
+#
+# Function: usage
+#
+# Output trustGMATDesktopIcon.sh command and parameters help info.
+#
+function usage
+{
+    cat <<EOF
+NAME
+     trustGMATDesktopIcon.sh -- attempt to configure Gnome desktop to trust
+                                the GMAT icon.
+
+SYNOPSIS
+     trustGMATDesktopIcon.sh [OPTION]
+
+DESCRIPTION
+     Attempt to have Gnome trust the GMAT desktop icon.
+
+OPTIONS
+     -h, --help
+          Display this help
+EOF
+    return 0
+}
+
+options "$@"
+
 # Create an autostart script to run at each run at the first graphic login
-mkdir --parents "$HomeDir"/gmat-build 2>&1; echo "$?" >"$RCFile" | \
-    tee --append "$LOG_FILE_NAME"
-if [[ $(cat "$RCFile") != 0 ]]; then
-    errorExit "Error creating $HomeDir/gmat-build directory"
-fi
+errorMessage="Error creating $HomeDir/gmat-build directory"
+mkdir --parents "$HomeDir"/gmat-build 2>&1
 
-mkdir --parents "$HomeDir/.config/autostart" || errorExit "Unable to create $HomeDir/.conconfig/autostart"
+errorMessage="Unable to create $HomeDir/.conconfig/autostart"
+mkdir --parents "$HomeDir/.config/autostart" 2>&1 | tee --append "$LOG_FILE_NAME"
 
-if ! [ -x "$HomeDir/.config/autostart/GMAT-truster.sh" ]; then
+if ! [ -x "$HomeDir/.config/autostart/GMATd-truster.sh" ]; then
 
     # Create an autostart script to wait for nautilus-desktop to come up, set the
-    # trust property of GMAT.desktop on, and then disable the autostart script by
+    # trust property of GMATd.desktop on, and then disable the autostart script by
     # turning off its execute file mode.
     exec 9<<EOF
 #!/bin/bash
@@ -79,15 +106,15 @@ if ! [ -x "$HomeDir/.config/autostart/GMAT-truster.sh" ]; then
 #                                                                              #
 ################################################################################
 
-if [ -x "$HOME/Desktop/GMAT.desktop" ]; then
+if [ -x "$HOME/Desktop/GMATd.desktop" ]; then
 
     # Wait for nautilus-desktop to start
     while ! pgrep -f -q 'nautilus-desktop'; do
         sleep 1
     done
 
-    # Trust the GMAT.desktop file
-    gio set "$HOME/Desktop/GMAT.desktop" "metadata::trusted" yes
+    # Trust the GMATd.desktop file
+    gio set "$HOME/Desktop/GMATd.desktop" "metadata::trusted" yes
 
     # Restart nautilus, so that the changes take effect (otherwise we would have to press F5)
     killall nautilus-desktop && nautilus-desktop &
@@ -99,26 +126,30 @@ fi
 exit 0
 EOF
 
-    cat <&9 > "$HomeDir/.config/autostart/GMAT_truster.sh" || errorExit "Unable to create $HomeDir/.config/autostart/GMAT_truster.sh"
-    chmod +x "$HomeDir/.config/autostart/GMAT_truster.sh" || errorExit "Unable to set mode to executable for $HomeDir/.config/autostart/GMAT_truster.sh"
+    errorMessage="Unable to create $HomeDir/.config/autostart/GMATd_truster.sh"
+    cat <&9 > "$HomeDir/.config/autostart/GMATd_truster.sh"  2>&1 | tee --append "$LOG_FILE_NAME"
+
+    errorMessage="Unable to set mode to executable for $HomeDir/.config/autostart/GMATd_truster.sh"
+    chmod +x "$HomeDir/.config/autostart/GMATd_truster.sh" 2>&1 | tee --append "$LOG_FILE_NAME"
 fi
 
-# Create a .config/autostart/GMAT_truster.desktop file if needed.
+# Create a .config/autostart/GMATd_truster.desktop file if needed.
 # This causes nautilus to invoke the shell script, if executable, above.
 
-if ! [ -f "$HomeDir/.config/autostart/GMAT_truster.desktop" ]; then
+if ! [ -f "$HomeDir/.config/autostart/GMATd_truster.desktop" ]; then
 
-    # Create the autostart desktop file to invoke $HOME/.config/autostart/GMAT-truster.sh at login
+    # Create the autostart desktop file to invoke $HOME/.config/autostart/GMATd-truster.sh at login
 
     exec 9<<EOF
 [Desktop Entry]
 Name=Desktop-Truster
 Comment=Autostarter to trust all desktop files
-Exec=$HOME/.config/autostart/GMAT-truster.sh
+Exec=$HOME/.config/autostart/GMATd-truster.sh
 Type=Application
 EOF
 
-    cat <&9 >"$HomeDir/.config/autostart/GMAT_truster.desktop" || errorExit "Error creating $HomeDir/.config/autostart/GMAT_truster.desktop"
+    errorMessage="Error creating $HomeDir/.config/autostart/GMATd_truster.desktop"
+    cat <&9 >"$HomeDir/.config/autostart/GMATd_truster.desktop"  2>&1 | tee --append "$LOG_FILE_NAME"
 fi
 
 exit 0
