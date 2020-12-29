@@ -3,11 +3,12 @@
 ################################################################################
 #                            createGMATLaucher.sh                              #
 #                                                                              #
-# Ubuntu shell script to add a GMAT icon to the Ubuntu desktop on a 18.04 box. #
+# Ubuntu shell script to add a GMATd icon to the Ubuntu desktop on a 18.04 box.#
 #                                                                              #
 # Change History                                                               #
 # 08/02/2020  Harry Goldschmitt  Original code.                                #
 # 09/18/2020  Harry Goldschmitt  Added sourced GMATUtilities.sh and logging    #
+# 12/16/2020  Harry Goldschmitt  Added better error handling logic             #
 #                                                                              #
 #                                                                              #
 ################################################################################
@@ -37,8 +38,8 @@
 #                                                                              #
 # Script - createGMATLaucher.sh                                                #
 #                                                                              #
-# Purpose: Add a GMAT desktop icon to the desktop so GUI users can launch the  #
-#          GMAT GUI.                                                           #
+# Purpose: Add a GMATd desktop icon to the desktop so GUI users can launch the #
+#          GMATd GUI.                                                          #
 #                                                                              #
 # Exits:                                                                       #
 #    0 - success                                                               #
@@ -46,9 +47,10 @@
 #                                                                              #
 ################################################################################
 
-SCRIPT_DIRECTORY="/vagrant"
-[ -d $SCRIPT_DIRECTORY ] || \
-    SCRIPT_DIRECTORY="$HOME"
+export FULLPATH
+FULLPATH=$(readlink -f "$0")
+export SCRIPT_DIRECTORY
+SCRIPT_DIRECTORY="${FULLPATH%/*}"
 
 [ -r "$SCRIPT_DIRECTORY/GMATUtilities.sh" ] || {
     echo "GMATUtilities.sh not found or readable" >&2;
@@ -57,31 +59,49 @@ SCRIPT_DIRECTORY="/vagrant"
 # shellcheck source=./GMATUtilities.sh
 source "$SCRIPT_DIRECTORY/GMATUtilities.sh"
 
+#
+# Function: usage
+#
+# Output createGMATLauncher.sh command and parameters help info.
+#
+function usage
+{
+    cat <<EOF
+NAME
+     createGMATLauncher.sh -- add a GMATd icon on the user's desktop.
+
+SYNOPSIS
+     createGMATLauncher.sh [OPTION]
+
+DESCRIPTION
+     Add a GMATd icon on the user's desktop.
+
+OPTIONS
+     -h, --help
+          Display this help
+EOF
+    return 0
+}
+
+options "$@"
+
 GMAT_VERSION="R2020a"
 GMAT_SRC_DIR="$HomeDir/gmat"
 GMAT_INSTALL_DIR="$GMAT_SRC_DIR//GMAT-$GMAT_VERSION-Linux-x64"
 GMAT_PATH_DIR="$GMAT_INSTALL_DIR/bin"
 
+errorMessage="Unable to change to $HomeDir directory"
 # shellcheck disable=SC2164
-cd "$HomeDir" 2>&1; echo "$?" >"$RCFile" | \
-    tee --append "$LOG_FILE_NAME"
-if [[ $(cat "$RCFile") != 0 ]]; then
-    errorExit "Unable to change to $HomeDir directory"
-fi
+cd "$HomeDir" 2>&1 | tee --append "$LOG_FILE_NAME"
 
-mkdir --parents "$HomeDir/Desktop" 2>&1; echo "$?" >"$RCFile" | tee --append "$LOG_FILE_NAME"
-if [[ $(cat "$RCFile") != 0 ]]; then
-    errorExit "Unable to create $HomeDir/Desktop directory"
-fi
+errorMessage="Unable to create $HomeDir/Desktop directory"
+mkdir --parents "$HomeDir/Desktop" 2>&1 | tee --append "$LOG_FILE_NAME"
 
+errorMessage="Unable to change to $HomeDir/Desktop directory"
 # shellcheck disable=SC2164
-cd "$HomeDir/Desktop" 2>&1; echo "$?" >"$RCFile" | \
-    tee --append "$LOG_FILE_NAME"
-if [[ $(cat "$RCFile") != 0 ]]; then
-    errorExit "Unable to change to $HomeDir/Desktop directory"
-fi
+cd "$HomeDir/Desktop" 2>&1 | tee --append "$LOG_FILE_NAME"
 
-if ! [ -x "$HomeDir/Desktop/GMAT.desktop" ]; then
+if ! [ -x "$HomeDir/Desktop/GMATd.desktop" ]; then
 
     # Create the desktop file to produce the clickable desktop icon
     exec 9<<EOF
@@ -89,35 +109,29 @@ if ! [ -x "$HomeDir/Desktop/GMAT.desktop" ]; then
 Version=1.0
 Type=Application
 Terminal=false
-Exec=$GMAT_PATH_DIR/GMAT
+Exec=$GMAT_PATH_DIR/GMATd
 Path=$GMAT_PATH_DIR
-Name=GMAT
-Comment=GMAT GUI
+Name=GMATd
+Comment=GMATd GUI
 Icon=$GMAT_INSTALL_DIR/data/graphics/icons/GMATIcon.icns
 EOF
 
-    cat <&9 > "$HomeDir/Desktop/GMAT.desktop" 2>&1; echo "$?" >"$RCFile" | tee --append "$LOG_FILE_NAME"
-    if [[ $(cat "$RCFile") != 0 ]]; then
-        errorExit "Unable to create $HomeDir/Desktop/GMAT.desktop"
-    fi
+    errorMessage="Unable to create $HomeDir/Desktop/GMATd.desktop"
+    cat <&9 > "$HomeDir/Desktop/GMATd.desktop" 2>&1 | tee --append "$LOG_FILE_NAME"
 
-    chmod +x "$HomeDir/Desktop/GMAT.desktop" 2>&1; echo "$?" >"$RCFile" | tee --append "$LOG_FILE_NAME"
-    if [[ $(cat "$RCFile") != 0 ]]; then
-        errorExit "Unable to set $HomeDir/Desktop/GMAT.desktop as executable"
-    fi
+    errorMessage="Unable to set $HomeDir/Desktop/GMATd.desktop as executable"
+    chmod +x "$HomeDir/Desktop/GMATd.desktop" 2>&1 | tee --append "$LOG_FILE_NAME"
 
-    "$SCRIPT_DIRECTORY/trustGMATDesktopIcon.sh" 2>&1; echo "$?" >"$RCFile" | tee --append "$LOG_FILE_NAME"
-    if [[ $(cat "$RCFile") != 0 ]]; then
-        errorExit "Error running /vagrant/trustGMATDesktopIcon.sh"
-    fi
+    errorMessage="Error running /vagrant/trustGMATdDesktopIcon.sh"
+    "$SCRIPT_DIRECTORY/trustGMATdDesktopIcon.sh" 2>&1 | tee --append "$LOG_FILE_NAME"
 
-    echo "A GMAT icon has been created" | tee --append "$LOG_FILE_NAME"
-    echo "Note: when clicking on the icon the FIRST time a warning dialog MAY appear stating that GMAT.desktop has" | tee --append "$LOG_FILE_NAME"
+    echo "A GMATd icon has been created" | tee --append "$LOG_FILE_NAME"
+    echo "Note: when clicking on the icon the FIRST time a warning dialog MAY appear stating that GMATd.desktop has" | tee --append "$LOG_FILE_NAME"
     echo "      not been marked as trusted. If this appears please click on the \"Trust and Launch\" button." | tee --append "$LOG_FILE_NAME"
     echo "      This is a GNOME \"Security Feature\" and should only happen once." | tee --append "$LOG_FILE_NAME"
 
 else
-    echo "The GMAT icon has previously been created, exiting." | tee --append "$LOG_FILE_NAME"
+    echo "The GMATd icon has previously been created, exiting." | tee --append "$LOG_FILE_NAME"
 fi
 
 exit 0

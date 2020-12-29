@@ -17,6 +17,8 @@
 #                                added common sourced utility file.            #
 # 10/14/2020  Harry Goldschmitt  Added Kitware repository so latest version of #
 #                                cmake can be installed.                       #
+# 11/01/2020  Harry Goldschmitt  Support both Ubuntu 18.04 and Ubuntu 20.04    #
+# 12/16/2020  Harry Goldschmitt  Added better error handling logic             #
 #                                                                              #
 #                                                                              #
 ################################################################################
@@ -56,9 +58,10 @@
 #                                                                              #
 ################################################################################
 
-SCRIPT_DIRECTORY="/vagrant"
-[ -d $SCRIPT_DIRECTORY ] || \
-    SCRIPT_DIRECTORY="$HOME"
+export FULLPATH
+FULLPATH=$(readlink -f "$0")
+export SCRIPT_DIRECTORY
+SCRIPT_DIRECTORY="${FULLPATH%/*}"
 
 [ -r "$SCRIPT_DIRECTORY/GMATUtilities.sh" ] || {
     echo "GMATUtilities.sh not found or readable" >&2;
@@ -67,26 +70,35 @@ SCRIPT_DIRECTORY="/vagrant"
 # shellcheck source=./GMATUtilities.sh
 source "$SCRIPT_DIRECTORY/GMATUtilities.sh"
 
-GMAT_VERSION="R2020a"
-GMAT_REPOSITORY="https://git.code.sf.net/p/gmat/git"
-GMAT_SRC_DIR="gmat"
-GMAT_2020a_HEAD_SHA1="d17522c9b3aba39cf723f225690af344712829a3"
-
 #
-# Function: waitForAPT
+# Function: usage
 #
-# waitForAPT
+# Output gmat_dependencies.sh command and parameters help info.
 #
-# Description: Loop until all processes using the apt locks complete
-#
-function waitForAPT
+function usage
 {
-    while pgrep apt >/dev/null; do
-        echo "Another apt instance is running, waiting for 3 seconds" | tee --append "$LOG_FILE_NAME"
-        sleep 3
-    done
+    cat <<EOF
+NAME
+     gmat_dependencies.sh -- install all GMAT dependencies
+
+SYNOPSIS
+     gmat_dependencies.sh [OPTION]
+
+DESCRIPTION
+     Install all GMAT dependencies.
+
+OPTIONS
+     -h, --help
+          Display this help
+EOF
     return 0
 }
+
+options "$@"
+
+GMAT_REPOSITORY="git://git.code.sf.net/p/gmat/git"
+GMAT_SRC_DIR="gmat"
+GMAT_Branch="GMAT-R2020a"
 
 echo "Take a break. This may take an hour or more" | tee --append "$LOG_FILE_NAME"
 sleep 10
@@ -94,18 +106,15 @@ sleep 10
 # Make sure other apt command instances have completed
 waitForAPT
 
-cd "$HomeDir" || errorExit "Can't cd to $HomeDir"
-
-# Note: In order to retain the sudo command's return codes, all the following sudo commands save their return codes
-# in $RCFile, before the sudo command exits. This return code is checked after the sudo exits, and the proper steps
-# are taken.
+errorMessage="Can't cd to $HomeDir"
+cd "$HomeDir"
 
 # Add repositories
-echo "Adding kisak-mesa repository" | tee --append "$LOG_FILE_NAME"
-sudo --preserve-env /bin/bash -c 'apt-add-repository --yes --update --enable-source ppa:kisak/kisak-mesa 2>&1; echo "$?" >"$RCFile"' | \
-    tee --append  "$LOG_FILE_NAME"
-if [[ $(cat "$RCFile") != 0 ]]; then
-    errorExit "Can\'t add kisak repository"
+# Add kisak-mesa only for Ubuntu 18.04, it's supported in 20.04
+if [ "$UBUNTU_RELEASE" = "18.04" ]; then
+    echo "Adding kisak-mesa repository" | tee --append "$LOG_FILE_NAME"
+    errorMessage="Can\'t add kisak repository"
+    runUnderSUDO apt-add-repository --yes --update --enable-source ppa:kisak/kisak-mesa
 fi
 
 # Add any other required repositories here
@@ -117,8 +126,11 @@ fi
 
 # Upgrade existing system, if needed - Ignore error exits
 echo "Performing apt-get update/apt-get upgrade to update base system to the latest level" | tee --append "$LOG_FILE_NAME"
-sudo /bin/bash -c 'apt-get --quiet --quiet update --yes 2>&1' | tee --append "$LOG_FILE_NAME"
-sudo /bin/bash -c 'apt-get --quiet --quiet upgrade --yes 2>&1' | tee --append "$LOG_FILE_NAME"
+
+errorMessage="Error updating apt packages"
+runUnderSUDO apt-get --quiet --quiet update
+errorMessage="Error upgrading apt packages"
+runUnderSUDO apt-get --quiet --quiet upgrade
 
 # Install prerequisite packages
 export PACKAGES
@@ -128,8 +140,9 @@ p7zip \
 xattr \
 wget \
 subversion \
-git \
+git-all \
 shellcheck \
+mlocate \
 apt-transport-https \
 build-essential \
 libgtk2.0-dev \
@@ -140,133 +153,104 @@ libglu1-mesa-dev \
 freeglut3 \
 freeglut3-dev \
 gfortran \
-libwxgtk3.0-0v5 \
 csh \
 libgtk2.0-dev \
 libgtk2.0-doc \
-libwxgtk3.0-gtk3-dev \
 mesa-utils \
 libdrm-dev \
 mesa-common-dev \
 python3-dev \
 libboost-dev"
 
+case "$UBUNTU_RELEASE" in
+    18.04 )
+        PACKAGES="$PACKAGES libwxgtk3.0-dev libwxgtk3.0-0v5 bsdtar"
+        ;;
+    20.04 )
+        PACKAGES="$PACKAGES libwxgtk3.0-gtk3-dev libwxgtk3.0-gtk3-0v5 libarchive-tools"
+        ;;
+    * )
+        echo "Unknown release - $UBUNTU_RELEASE" | tee --append "$LOG_FILE_NAME"
+        exit 1
+        ;;
+esac
+
 # Octave packages
 # octave \
 # liboctave-dev \
 
 echo "Installing prerequisite packages" | tee --append "$LOG_FILE_NAME"
-sudo --preserve-env /bin/bash -c 'apt-get --quiet --quiet install --yes $PACKAGES 2>&1; echo "$?" >"$RCFile"' | \
-    tee --append "$LOG_FILE_NAME"
-if [[ $(cat "$RCFile") != 0 ]]; then
-    errorExit "Prerequisite package install failed, exiting"
+
+errorMessage="Prerequisite package install failed, exiting"
+if ! runAPTGet "$PACKAGES"; then
+    echo  "$errorMessage" | tee --append "$LOG_FILE_NAME" >&2
+    exit 1
 fi
 
 # Commands to install cmake packages from Kitware, see https://apt.kitware.com/
 echo "Installing Kitware cmake repository" | tee --append "$LOG_FILE_NAME"
-wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | gpg --dearmor - | sudo tee /etc/apt/trusted.gpg.d/kitware.gpg >/dev/null
-sudo --preserve-env /bin/bash -c 'apt-add-repository --yes --update --enable-source '\''deb https://apt.kitware.com/ubuntu/ bionic main'\'' 2>&1; echo "$?" >"$RCFile"' | \
-    tee --append  "$LOG_FILE_NAME"
-if [[ $(cat "$RCFile") != 0 ]]; then
-    errorExit "Can\'t add cmake repository"
-fi
+
+case "$UBUNTU_RELEASE" in
+    18.04 )
+        wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | gpg --dearmor - | sudo -- tee /etc/apt/trusted.gpg.d/kitware.gpg >/dev/null
+
+        errorMessage="Can\'t add cmake repository"
+        runUnderSUDO apt-add-repository --update 'deb https://apt.kitware.com/ubuntu/ bionic main' | tee --append "$LOG_FILE_NAME"
+        ;;
+    20.04 )
+        errorMessage="Error in pipe getting Kitware cmake repository key"
+        wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | gpg --dearmor - | sudo -- tee /etc/apt/trusted.gpg.d/kitware.gpg >/dev/null
+
+        errorMessage="Can\'t add cmake repository"
+        runUnderSUDO apt-add-repository --update 'deb https://apt.kitware.com/ubuntu/ focal main' 2>&1 | tee --append "$LOG_FILE_NAME"
+        ;;
+    * )
+        errorExit "Unknown Ubuntu release - $UBUNTU_RELEASE"
+        ;;
+esac
 
 # Install Kitware keyring, to keep Kitware's keyring up to date
-sudo --preserve-env /bin/bash -c 'apt-get --quiet --quiet install --yes kitware-archive-keyring 2>&1; echo "$?" >"$RCFile"' | \
-    tee --append  "$LOG_FILE_NAME"
-if [[ $(cat "$RCFile") != 0 ]]; then
-    errorExit "Can\'t install Kitware keyring"
-fi
+errorMessage="Can\'t install Kitware keyring"
+runAPTGet kitware-archive-keyring
 
-sudo --preserve-env /bin/bash -c 'rm --force /etc/apt/trusted.gpg.d/kitware.gpg 2>&1; echo "$?" >"$RCFile"' | \
-    tee --append  "$LOG_FILE_NAME"
-if [[ $(cat "$RCFile") != 0 ]]; then
+if ! runUnderSUDO rm --force /etc/apt/trusted.gpg.d/kitware.gpg; then
     errorExit "Can\'t remove existing Kitware gpg key"
 fi
 
-export CMAKE_PACKAGES
-CMAKE_PACKAGES="cmake cmake-qt-gui cmake-curses-gui"
 echo "Installing cmake" | tee --append "$LOG_FILE_NAME"
-sudo --preserve-env /bin/bash -c 'apt-get --quiet --quiet install --yes $CMAKE_PACKAGES 2>&1; echo "$?" >"$RCFile"' | \
-    tee --append "$LOG_FILE_NAME"
-if [[ $(cat "$RCFile") != 0 ]]; then
-    errorExit "Failed to install cmake packages, exiting"
-fi
+errorMessage="Failed to install cmake packages, exiting"
+runAPTGet cmake cmake-qt-gui cmake-curses-gui
 
 echo "Installing Ubuntu desktop - over 900 packages" | tee --append "$LOG_FILE_NAME"
-sudo --preserve-env /bin/bash -c 'apt-get --quiet --quiet install --yes ubuntu-desktop 2>&1; echo "$?" >"$RCFile"' | \
-    tee --append "$LOG_FILE_NAME"
-if [[ $(cat "$RCFile") != 0 ]]; then
-    errorExit "Ubuntu desktop install failed, exiting"
-fi
+errorMessage="Failed to install Ubuntu desktop, exiting"
+runAPTGet ubuntu-desktop
 
-cd "$HomeDir" >>"$LOG_FILE_NAME" 2>&1 || \
-    errorExit "Unable to cd to $HomeDir"
+errorMessage="Unable to cd to $HomeDir"
+cd "$HomeDir"
 
 # Clone GMAT build to the R2020a revision as of 09/14/2020
-echo "Cloning GMAT git at $GMAT_VERSION" | tee --append "$LOG_FILE_NAME"
+echo "Cloning GMAT git at $GMAT_Branch" | tee --append "$LOG_FILE_NAME"
 # Delete the gmat directory
-rm --recursive --force "$GMAT_SRC_DIR" 2>&1; echo "$?" >"$RCFile" | \
-    tee --append "$LOG_FILE_NAME"
-if [[ $(cat "$RCFile") != 0 ]]; then
-    errorExit "Error deleting $HomeDir/$GMAT_SRC_DIR directory"
-fi
+errorMessage="Error deleting $HomeDir/$GMAT_SRC_DIR directory"
+rm --recursive --force "$GMAT_SRC_DIR" 2>&1 | tee --append "$LOG_FILE_NAME"
 
 # Create the gmat directory
-mkdir --parents "$HomeDir/$GMAT_SRC_DIR" 2>&1; echo "$?" >"$RCFile" | \
-    tee --append "$LOG_FILE_NAME"
-if [[ $(cat "$RCFile") != 0 ]]; then
-    errorExit "Error creating $HomeDir/$GMAT_SRC_DIR directory"
-fi
+errorMessage="Error creating $HomeDir/$GMAT_SRC_DIR directory"
+mkdir --parents "$HomeDir/$GMAT_SRC_DIR"
 
-# Clone the current GMAT repository
-# For some unknown reason cloning the Source Forge GMAT git repository does not provide the correct contents of the gmat/depends directory,
-# so force the repository to a specific SHA1 release.
-git clone "$GMAT_REPOSITORY" "$GMAT_SRC_DIR" 2>&1; echo "$?" >"$RCFile" | \
-    tee --append "$LOG_FILE_NAME"
-if [[ $(cat "$RCFile") != 0 ]]; then
-    errorExit "Error gmat/git"
-fi
+# Clone the current GMAT repository branch
+errorMessage="Error cloning $GMAT_REPOSITORY"
+git clone --depth 1 --branch $GMAT_Branch "$GMAT_REPOSITORY" "$GMAT_SRC_DIR" 2>&1 | tee --append "$LOG_FILE_NAME"
 
-# shellcheck disable=SC2164
-cd "$HomeDir/$GMAT_SRC_DIR" 2>&1; echo "$?" >"$RCFile" | \
-    tee --append "$LOG_FILE_NAME"
-if [[ $(cat "$RCFile") != 0 ]]; then
-    errorExit "Could not cd to $HomeDir/$GMAT_SRC_DIR"
-fi
-
-git checkout "$GMAT_2020a_HEAD_SHA1" 2>&1; echo "$?" >"$RCFile" | \
-    tee --append "$LOG_FILE_NAME"
-if [[ $(cat "$RCFile") != 0 ]]; then
-    errorExit "Could not checkout required SHA1"
-fi
-
-git reset --hard 2>&1; echo "$?" >"$RCFile" | \
-    tee --append "$LOG_FILE_NAME"
-if [[ $(cat "$RCFile") != 0 ]]; then
-    errorExit "Could not reset repository"
-fi
-
-# shellcheck disable=SC2164
-cd "$HomeDir/$GMAT_SRC_DIR/depends" 2>&1; echo "$?" >"$RCFile" | \
-    tee --append "$LOG_FILE_NAME"
-if [[ $(cat "$RCFile") != 0 ]]; then
-    errorExit "Could not cd to $HomeDir/$GMAT_SRC_DIR/depends/"
-fi
+errorMessage="Could not cd to $HomeDir/$GMAT_SRC_DIR/depends/"
+cd "$HomeDir/$GMAT_SRC_DIR/depends" 2>&1 | tee --append "$LOG_FILE_NAME"
 
 echo "Running GMAT configure.py" | tee --append "$LOG_FILE_NAME"
-python3 ./configure.py 2>&1; echo "$?" >"$RCFile" | \
-    tee --append "$LOG_FILE_NAME"
-if [[ $(cat "$RCFile") != 0 ]]; then
-    errorExit "configure.py failed, check its $GMAT_SRC_DIR/depends/logs"
-fi
+errorMessage="configure.py failed, check its $GMAT_SRC_DIR/depends/logs"
+bash -c "/usr/bin/python3 $HomeDir/$GMAT_SRC_DIR/depends/configure.py 2>&1" | tee --append "$LOG_FILE_NAME"
 
 echo "GMAT dependency creation complete" | tee --append "$LOG_FILE_NAME"
 
-sudo --preserve-env /bin/bash -c 'shutdown --reboot "+1" "Restarting to enable Ubuntu desktop" 2>&1; echo "$?" >"$RCFile"' | \
-    tee --append "$LOG_FILE_NAME"
-if [[ $(cat "$RCFile") != 0 ]]; then
-    errorExit "Error restarting system"
-fi
+runUnderSUDO shutdown --reboot "+1" "Restarting to enable Ubuntu desktop"
 
 exit 0
