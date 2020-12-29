@@ -59,7 +59,7 @@ NAME
                                 the GMAT icon.
 
 SYNOPSIS
-     trustGMATdDesktopIcon.sh [OPTION]
+     trustGMATDesktopIcon.sh [OPTION]
 
 DESCRIPTION
      Attempt to have Gnome trust the GMAT desktop icon.
